@@ -1,0 +1,396 @@
+diff --git a/zkapi-clientd/cmd/zkapi-clientd/main.go b/zkapi-clientd/cmd/zkapi-clientd/main.go
+index 37c2084..b6d032d 100644
+--- a/zkapi-clientd/cmd/zkapi-clientd/main.go
++++ b/zkapi-clientd/cmd/zkapi-clientd/main.go
+@@ -11,10 +11,12 @@ import (
+ 	"log"
+ 	"net"
+ 	"net/http"
++	"net/url"
+ 	"os"
+ 	"os/signal"
+ 	"path/filepath"
+ 	"reflect"
++	"strconv"
+ 	"strings"
+ 	"syscall"
+ 	"time"
+@@ -85,7 +87,7 @@ func run(args []string) error {
+ 		return runConfigure(ctx, dir, args[1:], ui, os.Stdout)
+ 	}
+ 	if args[0] == "serve" && len(args) == 2 && (args[1] == "--help" || args[1] == "-h") {
+-		fmt.Println("Usage: zkapi-clientd serve\nRun the saved configuration. Run zkapi-clientd config to configure missing prerequisites.")
++		fmt.Println("Usage: zkapi-clientd serve [supervisor options]\nRun the saved configuration. Run zkapi-clientd config to configure missing prerequisites.\n" + serveOptionsHelp)
+ 		return nil
+ 	}
+ 	c, err := config.Load(dir)
+@@ -146,21 +148,64 @@ func initialize(dir string, args []string) error {
+ 	return nil
+ }
+ 
+-// Serving uses the saved network without rewriting wallet state.
++const serveOptionsHelp = `Supervisor options apply to this run only and are never saved:
++  --relay-url URL                   Wisp relay or loopback SOCKS5 proxy (socks5://127.0.0.1:PORT)
++  --companion-proxy-listen IP:PORT  fixed loopback address for the companion CONNECT proxy
++  --wallet-api-listen IP:PORT       fixed loopback address for the managed companion API
++  --require-managed-companion       refuse to start when external_companion is configured`
++
++// Serving uses the saved network without rewriting wallet state. Supervisor
++// options change only this process's in-memory copy.
+ func serveConfig(c config.Config, args []string) (config.Config, error) {
+ 	f := flag.NewFlagSet("serve", flag.ContinueOnError)
++	relayURL := f.String("relay-url", "", "")
++	f.StringVar(&c.CompanionProxyListen, "companion-proxy-listen", "", "")
++	walletListen := f.String("wallet-api-listen", "", "")
++	requireManaged := f.Bool("require-managed-companion", false, "")
+ 	if err := f.Parse(args); err != nil {
+ 		return config.Config{}, err
+ 	}
+ 	if f.NArg() != 0 {
+ 		return config.Config{}, errors.New("serve accepts no arguments; use zkapi-clientd config to change settings")
+ 	}
++	empty := false
++	f.Visit(func(f *flag.Flag) { empty = empty || f.Value.String() == "" })
++	if empty {
++		return config.Config{}, errors.New("serve options require nonempty values")
++	}
++	if c.ZKAPI.ExternalCompanion && (*requireManaged || c.CompanionProxyListen != "" || *walletListen != "") {
++		return config.Config{}, errors.New("a managed companion is required, but this configuration uses external_companion")
++	}
++	for _, address := range []string{c.CompanionProxyListen, *walletListen} {
++		if err := fixedLoopback(address); err != nil {
++			return config.Config{}, err
++		}
++	}
++	if *relayURL != "" {
++		c.RelayURL = *relayURL
++	}
++	if *walletListen != "" {
++		c.ZKAPI.ClientURL = "http://" + *walletListen
++	}
+ 	if err := config.Validate(c); err != nil {
+ 		return config.Config{}, err
+ 	}
+ 	return c, nil
+ }
+ 
++// The companion accepts only these literal proxy hosts; port 0 would defeat pinning.
++func fixedLoopback(address string) error {
++	if address == "" {
++		return nil
++	}
++	host, port, err := net.SplitHostPort(address)
++	number, portErr := strconv.Atoi(port)
++	if err != nil || (host != "127.0.0.1" && host != "::1") || portErr != nil || number < 1 || number > 65535 {
++		return errors.New("supervisor listen addresses must be 127.0.0.1:PORT or [::1]:PORT with a nonzero port")
++	}
++	return nil
++}
++
+ func zkConfig(c config.Config, client *http.Client) zkapi.Config {
+ 	return zkapi.Config{ClientURL: c.ZKAPI.ClientURL, BridgeToken: c.ZKAPI.BridgeToken, Network: c.ZKAPI.Network, HTTPClient: client, KeyReuseWindow: time.Duration(c.KeyReuseWindowSeconds) * time.Second}
+ }
+@@ -250,14 +295,22 @@ func serveSnapshot(ctx context.Context, dir string, c, expected config.Config, o
+ 	if err != nil {
+ 		return err
+ 	}
++	kind, relayEndpoint := relay.Describe(c.RelayURL)
++	clientURL, _ := url.Parse(c.ZKAPI.ClientURL) // validated by config.Validate
++	transportStatus := &server.TransportStatus{Kind: kind, RelayEndpoint: relayEndpoint, Companion: "external", WalletAPI: clientURL.Host}
+ 	if !c.ZKAPI.ExternalCompanion {
+ 		// Keep the local HTTPS-only bridge in both routing modes so the
+ 		// companion cannot follow a redirect to plaintext HTTP.
+-		proxy, err := relay.StartConnectProxy(life, c.RelayURL)
++		proxyListen := "127.0.0.1:0"
++		if c.CompanionProxyListen != "" {
++			proxyListen = c.CompanionProxyListen
++		}
++		proxy, err := relay.StartConnectProxyOn(life, c.RelayURL, proxyListen)
+ 		if err != nil {
+ 			return err
+ 		}
+ 		defer proxy.Close()
++		transportStatus.Companion, transportStatus.ConnectProxy = "managed", proxy.Addr
+ 		cmd, err := zkapi.CompanionCommand(life, zc, zkapi.CompanionConfig{Binary: c.ZKAPI.Binary, SetupDir: c.ZKAPI.ProofSetupDir, StateDir: filepath.Join(dir, "zkapi"), VerifierURL: c.VerifierURL, ProxyURL: proxy.URL, TestnetPassword: password})
+ 		if err != nil {
+ 			return err
+@@ -296,6 +349,7 @@ func serveSnapshot(ctx context.Context, dir string, c, expected config.Config, o
+ 	api.Status = server.ServiceStatus{Backend: c.Backend}
+ 	api.Status.Network = c.ZKAPI.Network
+ 	api.Status.RequestBudgetPolicy = "model"
++	api.Status.Transport = transportStatus
+ 	if funding != nil {
+ 		// server.API rejects browser origins and requires both the local bearer
+ 		// and owner-only credential before dispatching any wallet operation.
+diff --git a/zkapi-clientd/cmd/zkapi-clientd/supervisor_flags_test.go b/zkapi-clientd/cmd/zkapi-clientd/supervisor_flags_test.go
+new file mode 100644
+index 0000000..41e92ea
+--- /dev/null
++++ b/zkapi-clientd/cmd/zkapi-clientd/supervisor_flags_test.go
+@@ -0,0 +1,59 @@
++package main
++
++import (
++	"reflect"
++	"testing"
++
++	"github.com/ethereum/zkapi/zkapi-clientd/internal/config"
++)
++
++func TestServeSupervisorOptionsChangeOnlyTheInMemoryRun(t *testing.T) {
++	c, err := config.Default()
++	if err != nil {
++		t.Fatal(err)
++	}
++	saved := c
++	got, err := serveConfig(c, []string{"--relay-url", "socks5://127.0.0.1:9150", "--companion-proxy-listen", "127.0.0.1:47001", "--wallet-api-listen", "127.0.0.1:47002", "--require-managed-companion"})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got.RelayURL != "socks5://127.0.0.1:9150" || got.CompanionProxyListen != "127.0.0.1:47001" || got.ZKAPI.ClientURL != "http://127.0.0.1:47002" {
++		t.Fatalf("supervisor options not applied: %+v", got)
++	}
++	if got.ZKAPI.BridgeToken != saved.ZKAPI.BridgeToken || got.APIKey != saved.APIKey || got.ZKAPI.Network != saved.ZKAPI.Network {
++		t.Fatal("supervisor options changed credentials or network")
++	}
++	if !reflect.DeepEqual(c, saved) {
++		t.Fatal("supervisor options mutated the saved snapshot")
++	}
++	for _, args := range [][]string{
++		{"--relay-url", "socks5://203.0.113.1:9050"},
++		{"--relay-url", "http://127.0.0.1:9050"},
++		{"--relay-url", ""},
++		{"--companion-proxy-listen", "127.0.0.1:0"},
++		{"--companion-proxy-listen", "0.0.0.0:47001"},
++		{"--companion-proxy-listen", "localhost:47001"},
++		{"--wallet-api-listen", "127.0.0.2:47002"},
++		{"--wallet-api-listen", ""},
++	} {
++		if _, err := serveConfig(c, args); err == nil {
++			t.Fatalf("accepted invalid supervisor options %q", args)
++		}
++	}
++}
++
++func TestRequireManagedCompanionRefusesExternalCompanion(t *testing.T) {
++	c, err := config.Default()
++	if err != nil {
++		t.Fatal(err)
++	}
++	c.ZKAPI.ExternalCompanion = true
++	if _, err := serveConfig(c, nil); err != nil {
++		t.Fatal("default external companion behavior changed:", err)
++	}
++	for _, args := range [][]string{{"--require-managed-companion"}, {"--companion-proxy-listen", "127.0.0.1:47001"}, {"--wallet-api-listen", "127.0.0.1:47002"}} {
++		if _, err := serveConfig(c, args); err == nil {
++			t.Fatalf("external companion accepted %q", args)
++		}
++	}
++}
+diff --git a/zkapi-clientd/internal/config/config.go b/zkapi-clientd/internal/config/config.go
+index dc40935..449f1a1 100644
+--- a/zkapi-clientd/internal/config/config.go
++++ b/zkapi-clientd/internal/config/config.go
+@@ -79,6 +79,8 @@ type Config struct {
+ 	RelayURL              string `json:"relay_url"` // empty uses direct HTTPS; nonempty selects Wisp or loopback SOCKS5
+ 	Concurrency           int    `json:"concurrency"`
+ 	ZKAPI                 ZKAPI  `json:"zkapi"`
++	// CompanionProxyListen is a serve-time supervisor option, never saved.
++	CompanionProxyListen string `json:"-"`
+ }
+ 
+ func DefaultDir() (string, error) {
+diff --git a/zkapi-clientd/internal/relay/connect.go b/zkapi-clientd/internal/relay/connect.go
+index 0962a4b..247e4a0 100644
+--- a/zkapi-clientd/internal/relay/connect.go
++++ b/zkapi-clientd/internal/relay/connect.go
+@@ -20,11 +20,18 @@ import (
+ // neither sees nor terminates the destination's TLS session.
+ type ConnectProxy struct {
+ 	URL    string // contains a process-local credential; do not log
++	Addr   string // listener address only; safe to report
+ 	server *http.Server
+ 	cancel context.CancelFunc
+ }
+ 
+ func StartConnectProxy(ctx context.Context, relayURL string) (*ConnectProxy, error) {
++	return StartConnectProxyOn(ctx, relayURL, "127.0.0.1:0")
++}
++
++// StartConnectProxyOn binds exactly listen. A bind failure is returned; it
++// never falls back to another port.
++func StartConnectProxyOn(ctx context.Context, relayURL, listen string) (*ConnectProxy, error) {
+ 	dialContext, err := destinationDialer(relayURL)
+ 	if err != nil {
+ 		return nil, err
+@@ -34,14 +41,14 @@ func StartConnectProxy(ctx context.Context, relayURL string) (*ConnectProxy, err
+ 		return nil, err
+ 	}
+ 	password := hex.EncodeToString(secret)
+-	listener, err := net.Listen("tcp", "127.0.0.1:0")
++	listener, err := net.Listen("tcp", listen)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	life, cancel := context.WithCancel(ctx)
+ 	auth := "Basic " + base64.StdEncoding.EncodeToString([]byte("oa:"+password))
+ 	server := &http.Server{Handler: connectHandler(life, auth, func(ctx context.Context, target string) (net.Conn, error) { return dialContext(ctx, "tcp", target) }), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 8192, ErrorLog: log.New(io.Discard, "", 0)}
+-	proxy := &ConnectProxy{URL: "http://oa:" + password + "@" + listener.Addr().String(), server: server, cancel: cancel}
++	proxy := &ConnectProxy{URL: "http://oa:" + password + "@" + listener.Addr().String(), Addr: listener.Addr().String(), server: server, cancel: cancel}
+ 	go func() { _ = server.Serve(listener) }()
+ 	return proxy, nil
+ }
+diff --git a/zkapi-clientd/internal/relay/connect_listen_test.go b/zkapi-clientd/internal/relay/connect_listen_test.go
+new file mode 100644
+index 0000000..8a84470
+--- /dev/null
++++ b/zkapi-clientd/internal/relay/connect_listen_test.go
+@@ -0,0 +1,46 @@
++package relay
++
++import (
++	"context"
++	"net"
++	"strings"
++	"testing"
++)
++
++func TestConnectProxyBindsRequestedAddressWithoutFallback(t *testing.T) {
++	probe, err := net.Listen("tcp", "127.0.0.1:0")
++	if err != nil {
++		t.Fatal(err)
++	}
++	address := probe.Addr().String()
++	probe.Close()
++	proxy, err := StartConnectProxyOn(context.Background(), "", address)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer proxy.Close()
++	if proxy.Addr != address || !strings.HasSuffix(proxy.URL, "@"+address) {
++		t.Fatalf("proxy bound %s, want %s", proxy.Addr, address)
++	}
++	if strings.Contains(proxy.Addr, "oa:") {
++		t.Fatal("reported address contains the proxy credential")
++	}
++	// The address is now occupied: a second proxy must fail, not pick another port.
++	if second, err := StartConnectProxyOn(context.Background(), "", address); err == nil {
++		second.Close()
++		t.Fatal("occupied proxy address fell back to another port")
++	}
++}
++
++func TestDescribeOmitsRelayCredentials(t *testing.T) {
++	for _, test := range []struct{ url, kind, endpoint string }{
++		{"", "direct", ""},
++		{"socks5://127.0.0.1:9150", "socks5", "127.0.0.1:9150"},
++		{DefaultURL, "wisp", "wss://oa-1.refraction.network"},
++	} {
++		kind, endpoint := Describe(test.url)
++		if kind != test.kind || endpoint != test.endpoint || strings.Contains(endpoint, "secret") {
++			t.Fatalf("Describe(%q) = %q %q", test.url, kind, endpoint)
++		}
++	}
++}
+diff --git a/zkapi-clientd/internal/relay/relay.go b/zkapi-clientd/internal/relay/relay.go
+index acebfc7..c453538 100644
+--- a/zkapi-clientd/internal/relay/relay.go
++++ b/zkapi-clientd/internal/relay/relay.go
+@@ -75,6 +75,22 @@ func destinationDialer(relayURL string) (func(context.Context, string, string) (
+ 	}, nil
+ }
+ 
++// Describe reports the transport kind and its endpoint without credentials,
++// path or query (a Wisp URL may carry a shared secret in its query).
++func Describe(relayURL string) (kind, endpoint string) {
++	u, err := url.Parse(relayURL)
++	switch {
++	case relayURL == "":
++		return "direct", ""
++	case err != nil:
++		return "invalid", ""
++	case u.Scheme == "socks5":
++		return "socks5", u.Host
++	default:
++		return "wisp", u.Scheme + "://" + u.Host
++	}
++}
++
+ type httpsOnly struct{ base http.RoundTripper }
+ 
+ func (t httpsOnly) RoundTrip(r *http.Request) (*http.Response, error) {
+diff --git a/zkapi-clientd/internal/server/server.go b/zkapi-clientd/internal/server/server.go
+index 3c2117b..444009e 100644
+--- a/zkapi-clientd/internal/server/server.go
++++ b/zkapi-clientd/internal/server/server.go
+@@ -49,9 +49,20 @@ type API struct {
+ // ServiceStatus is safe local metadata, containing no wallet state or secrets.
+ // It allows management commands to discover a serve-time backend override.
+ type ServiceStatus struct {
+-	Backend             string `json:"backend"`
+-	Network             string `json:"network,omitempty"`
+-	RequestBudgetPolicy string `json:"request_budget_policy,omitempty"`
++	Backend             string           `json:"backend"`
++	Network             string           `json:"network,omitempty"`
++	RequestBudgetPolicy string           `json:"request_budget_policy,omitempty"`
++	Transport           *TransportStatus `json:"transport,omitempty"`
++}
++
++// TransportStatus holds effective local endpoints only: no credentials,
++// relay query secrets, or wallet state.
++type TransportStatus struct {
++	Kind          string `json:"kind"` // direct, wisp, or socks5
++	RelayEndpoint string `json:"relay_endpoint,omitempty"`
++	Companion     string `json:"companion"` // managed or external
++	WalletAPI     string `json:"wallet_api"`
++	ConnectProxy  string `json:"connect_proxy,omitempty"`
+ }
+ 
+ func New(backend Backend, key string, concurrency int) (*API, error) {
+diff --git a/zkapi-clientd/internal/server/status_transport_test.go b/zkapi-clientd/internal/server/status_transport_test.go
+new file mode 100644
+index 0000000..63a7ebd
+--- /dev/null
++++ b/zkapi-clientd/internal/server/status_transport_test.go
+@@ -0,0 +1,41 @@
++package server
++
++import (
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
++	"testing"
++)
++
++func TestActiveStatusReportsTransportEndpointsOnly(t *testing.T) {
++	api, err := New(&fakeBackend{}, testKey, 1)
++	if err != nil {
++		t.Fatal(err)
++	}
++	api.Status = ServiceStatus{Backend: "zkapi", Network: "mainnet", Transport: &TransportStatus{Kind: "socks5", RelayEndpoint: "127.0.0.1:9150", Companion: "managed", WalletAPI: "127.0.0.1:47002", ConnectProxy: "127.0.0.1:47001"}}
++	r := httptest.NewRequest(http.MethodGet, "/admin/status", nil)
++	r.Header.Set("Authorization", "Bearer "+testKey)
++	w := httptest.NewRecorder()
++	api.ServeHTTP(w, r)
++	var got struct {
++		Transport map[string]string `json:"transport"`
++	}
++	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &got) != nil {
++		t.Fatal("status unavailable", w.Body.String())
++	}
++	want := map[string]string{"kind": "socks5", "relay_endpoint": "127.0.0.1:9150", "companion": "managed", "wallet_api": "127.0.0.1:47002", "connect_proxy": "127.0.0.1:47001"}
++	if len(got.Transport) != len(want) {
++		t.Fatal("unexpected transport fields", w.Body.String())
++	}
++	for key, value := range want {
++		if got.Transport[key] != value {
++			t.Fatalf("%s = %q, want %q", key, got.Transport[key], value)
++		}
++	}
++	r = httptest.NewRequest(http.MethodGet, "/admin/status", nil)
++	w = httptest.NewRecorder()
++	api.ServeHTTP(w, r)
++	if w.Code != 401 {
++		t.Fatal("transport status served without the API bearer")
++	}
++}

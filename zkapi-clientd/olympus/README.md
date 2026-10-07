@@ -56,6 +56,14 @@ Reference result (go1.27.1, 2026-10-07, macOS arm64): SHA-256
 `bffc86b70cbf409383970160f15f042ae57b8175d8102db7bcad4ea2ddbc37de`, 9,694,658
 bytes; identical to the earlier prototype build (`bffc86b7...`).
 
+Known limitation: the GitHub Actions macOS runner (setup-go go1.27.1, arm64) builds
+a different binary, SHA-256 `c5221f0df06b2470ed62a4bf0ce9bc6f1ab3e1aa8539145941ccd376548f84a3`,
+from the same commit. Each environment is self-consistent (two clean builds match),
+but builds are reproducible only per toolchain distribution: the local one is
+Homebrew's go1.27.1. Cause not yet isolated (suspect: Homebrew vs official
+toolchain build). Publish the hash of one named build environment, and resolve this
+before claiming cross-machine reproducibility.
+
 Unit tests run on Linux in CI and locally: `cd zkapi-clientd && gofmt -l . && go vet ./... && go test -race ./...`.
 
 ### Verifying a build yourself

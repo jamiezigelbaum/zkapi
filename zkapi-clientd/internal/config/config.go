@@ -79,6 +79,8 @@ type Config struct {
 	RelayURL              string `json:"relay_url"` // empty uses direct HTTPS; nonempty selects Wisp or loopback SOCKS5
 	Concurrency           int    `json:"concurrency"`
 	ZKAPI                 ZKAPI  `json:"zkapi"`
+	// CompanionProxyListen is a serve-time supervisor option, never saved.
+	CompanionProxyListen string `json:"-"`
 }
 
 func DefaultDir() (string, error) {

@@ -11,10 +11,12 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -85,7 +87,7 @@ func run(args []string) error {
 		return runConfigure(ctx, dir, args[1:], ui, os.Stdout)
 	}
 	if args[0] == "serve" && len(args) == 2 && (args[1] == "--help" || args[1] == "-h") {
-		fmt.Println("Usage: zkapi-clientd serve\nRun the saved configuration. Run zkapi-clientd config to configure missing prerequisites.")
+		fmt.Println("Usage: zkapi-clientd serve [supervisor options]\nRun the saved configuration. Run zkapi-clientd config to configure missing prerequisites.\n" + serveOptionsHelp)
 		return nil
 	}
 	c, err := config.Load(dir)
@@ -146,19 +148,62 @@ func initialize(dir string, args []string) error {
 	return nil
 }
 
-// Serving uses the saved network without rewriting wallet state.
+const serveOptionsHelp = `Supervisor options apply to this run only and are never saved:
+  --relay-url URL                   Wisp relay or loopback SOCKS5 proxy (socks5://127.0.0.1:PORT)
+  --companion-proxy-listen IP:PORT  fixed loopback address for the companion CONNECT proxy
+  --wallet-api-listen IP:PORT       fixed loopback address for the managed companion API
+  --require-managed-companion       refuse to start when external_companion is configured`
+
+// Serving uses the saved network without rewriting wallet state. Supervisor
+// options change only this process's in-memory copy.
 func serveConfig(c config.Config, args []string) (config.Config, error) {
 	f := flag.NewFlagSet("serve", flag.ContinueOnError)
+	relayURL := f.String("relay-url", "", "")
+	f.StringVar(&c.CompanionProxyListen, "companion-proxy-listen", "", "")
+	walletListen := f.String("wallet-api-listen", "", "")
+	requireManaged := f.Bool("require-managed-companion", false, "")
 	if err := f.Parse(args); err != nil {
 		return config.Config{}, err
 	}
 	if f.NArg() != 0 {
 		return config.Config{}, errors.New("serve accepts no arguments; use zkapi-clientd config to change settings")
 	}
+	empty := false
+	f.Visit(func(f *flag.Flag) { empty = empty || f.Value.String() == "" })
+	if empty {
+		return config.Config{}, errors.New("serve options require nonempty values")
+	}
+	if c.ZKAPI.ExternalCompanion && (*requireManaged || c.CompanionProxyListen != "" || *walletListen != "") {
+		return config.Config{}, errors.New("a managed companion is required, but this configuration uses external_companion")
+	}
+	for _, address := range []string{c.CompanionProxyListen, *walletListen} {
+		if err := fixedLoopback(address); err != nil {
+			return config.Config{}, err
+		}
+	}
+	if *relayURL != "" {
+		c.RelayURL = *relayURL
+	}
+	if *walletListen != "" {
+		c.ZKAPI.ClientURL = "http://" + *walletListen
+	}
 	if err := config.Validate(c); err != nil {
 		return config.Config{}, err
 	}
 	return c, nil
+}
+
+// The companion accepts only these literal proxy hosts; port 0 would defeat pinning.
+func fixedLoopback(address string) error {
+	if address == "" {
+		return nil
+	}
+	host, port, err := net.SplitHostPort(address)
+	number, portErr := strconv.Atoi(port)
+	if err != nil || (host != "127.0.0.1" && host != "::1") || portErr != nil || number < 1 || number > 65535 {
+		return errors.New("supervisor listen addresses must be 127.0.0.1:PORT or [::1]:PORT with a nonzero port")
+	}
+	return nil
 }
 
 func zkConfig(c config.Config, client *http.Client) zkapi.Config {
@@ -250,14 +295,22 @@ func serveSnapshot(ctx context.Context, dir string, c, expected config.Config, o
 	if err != nil {
 		return err
 	}
+	kind, relayEndpoint := relay.Describe(c.RelayURL)
+	clientURL, _ := url.Parse(c.ZKAPI.ClientURL) // validated by config.Validate
+	transportStatus := &server.TransportStatus{Kind: kind, RelayEndpoint: relayEndpoint, Companion: "external", WalletAPI: clientURL.Host}
 	if !c.ZKAPI.ExternalCompanion {
 		// Keep the local HTTPS-only bridge in both routing modes so the
 		// companion cannot follow a redirect to plaintext HTTP.
-		proxy, err := relay.StartConnectProxy(life, c.RelayURL)
+		proxyListen := "127.0.0.1:0"
+		if c.CompanionProxyListen != "" {
+			proxyListen = c.CompanionProxyListen
+		}
+		proxy, err := relay.StartConnectProxyOn(life, c.RelayURL, proxyListen)
 		if err != nil {
 			return err
 		}
 		defer proxy.Close()
+		transportStatus.Companion, transportStatus.ConnectProxy = "managed", proxy.Addr
 		cmd, err := zkapi.CompanionCommand(life, zc, zkapi.CompanionConfig{Binary: c.ZKAPI.Binary, SetupDir: c.ZKAPI.ProofSetupDir, StateDir: filepath.Join(dir, "zkapi"), VerifierURL: c.VerifierURL, ProxyURL: proxy.URL, TestnetPassword: password})
 		if err != nil {
 			return err
@@ -296,6 +349,7 @@ func serveSnapshot(ctx context.Context, dir string, c, expected config.Config, o
 	api.Status = server.ServiceStatus{Backend: c.Backend}
 	api.Status.Network = c.ZKAPI.Network
 	api.Status.RequestBudgetPolicy = "model"
+	api.Status.Transport = transportStatus
 	if funding != nil {
 		// server.API rejects browser origins and requires both the local bearer
 		// and owner-only credential before dispatching any wallet operation.

@@ -20,11 +20,18 @@ import (
 // neither sees nor terminates the destination's TLS session.
 type ConnectProxy struct {
 	URL    string // contains a process-local credential; do not log
+	Addr   string // listener address only; safe to report
 	server *http.Server
 	cancel context.CancelFunc
 }
 
 func StartConnectProxy(ctx context.Context, relayURL string) (*ConnectProxy, error) {
+	return StartConnectProxyOn(ctx, relayURL, "127.0.0.1:0")
+}
+
+// StartConnectProxyOn binds exactly listen. A bind failure is returned; it
+// never falls back to another port.
+func StartConnectProxyOn(ctx context.Context, relayURL, listen string) (*ConnectProxy, error) {
 	dialContext, err := destinationDialer(relayURL)
 	if err != nil {
 		return nil, err
@@ -34,14 +41,14 @@ func StartConnectProxy(ctx context.Context, relayURL string) (*ConnectProxy, err
 		return nil, err
 	}
 	password := hex.EncodeToString(secret)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := net.Listen("tcp", listen)
 	if err != nil {
 		return nil, err
 	}
 	life, cancel := context.WithCancel(ctx)
 	auth := "Basic " + base64.StdEncoding.EncodeToString([]byte("oa:"+password))
 	server := &http.Server{Handler: connectHandler(life, auth, func(ctx context.Context, target string) (net.Conn, error) { return dialContext(ctx, "tcp", target) }), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: time.Minute, MaxHeaderBytes: 8192, ErrorLog: log.New(io.Discard, "", 0)}
-	proxy := &ConnectProxy{URL: "http://oa:" + password + "@" + listener.Addr().String(), server: server, cancel: cancel}
+	proxy := &ConnectProxy{URL: "http://oa:" + password + "@" + listener.Addr().String(), Addr: listener.Addr().String(), server: server, cancel: cancel}
 	go func() { _ = server.Serve(listener) }()
 	return proxy, nil
 }

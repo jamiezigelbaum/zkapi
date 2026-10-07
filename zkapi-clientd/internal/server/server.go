@@ -49,9 +49,20 @@ type API struct {
 // ServiceStatus is safe local metadata, containing no wallet state or secrets.
 // It allows management commands to discover a serve-time backend override.
 type ServiceStatus struct {
-	Backend             string `json:"backend"`
-	Network             string `json:"network,omitempty"`
-	RequestBudgetPolicy string `json:"request_budget_policy,omitempty"`
+	Backend             string           `json:"backend"`
+	Network             string           `json:"network,omitempty"`
+	RequestBudgetPolicy string           `json:"request_budget_policy,omitempty"`
+	Transport           *TransportStatus `json:"transport,omitempty"`
+}
+
+// TransportStatus holds effective local endpoints only: no credentials,
+// relay query secrets, or wallet state.
+type TransportStatus struct {
+	Kind          string `json:"kind"` // direct, wisp, or socks5
+	RelayEndpoint string `json:"relay_endpoint,omitempty"`
+	Companion     string `json:"companion"` // managed or external
+	WalletAPI     string `json:"wallet_api"`
+	ConnectProxy  string `json:"connect_proxy,omitempty"`
 }
 
 func New(backend Backend, key string, concurrency int) (*API, error) {

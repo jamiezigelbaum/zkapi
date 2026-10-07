@@ -75,6 +75,22 @@ func destinationDialer(relayURL string) (func(context.Context, string, string) (
 	}, nil
 }
 
+// Describe reports the transport kind and its endpoint without credentials,
+// path or query (a Wisp URL may carry a shared secret in its query).
+func Describe(relayURL string) (kind, endpoint string) {
+	u, err := url.Parse(relayURL)
+	switch {
+	case relayURL == "":
+		return "direct", ""
+	case err != nil:
+		return "invalid", ""
+	case u.Scheme == "socks5":
+		return "socks5", u.Host
+	default:
+		return "wisp", u.Scheme + "://" + u.Host
+	}
+}
+
 type httpsOnly struct{ base http.RoundTripper }
 
 func (t httpsOnly) RoundTrip(r *http.Request) (*http.Response, error) {

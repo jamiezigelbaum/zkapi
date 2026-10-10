@@ -1,9 +1,9 @@
 # Olympus fork of zkapi-clientd
 
 Maintained fork of `zkapi-clientd` (Go) from https://github.com/ethereum/zkapi,
-carrying one small, opt-in supervisor patch and a reproducible build. Nothing
-here changes wallet, key, or protocol code. The Rust companion is not built or
-modified here.
+carrying opt-in supervisor and managed-companion custody patches plus a
+reproducible build. Nothing here changes wallet, key, or protocol code. The
+Rust companion is not built or modified here.
 
 ## Why a fork
 
@@ -26,17 +26,24 @@ flags, behaviour is unchanged from upstream.
 | `--companion-proxy-listen IP:PORT` | Binds the companion CONNECT proxy to exactly this address (`127.0.0.1` or `[::1]`, nonzero port). A bind failure exits; no fallback port. |
 | `--wallet-api-listen IP:PORT` | Fixed loopback address for the managed companion API; rewrites `zkapi.client_url` in memory. |
 | `--require-managed-companion` | Refuses to start if `external_companion` is configured (the two listen flags imply it). |
+| `--require-companion-custody` | macOS only: before every new wallet HTTP connection, dials without sending bytes, proves the supervised child owns the reverse endpoint of that exact established socket, and fails closed otherwise. |
 
 `/admin/status` (API bearer required) gains a `transport` object: `kind`,
-`relay_endpoint`, `companion`, `wallet_api`, `connect_proxy`; no credentials or
-query secrets. Full per-file description: the commit message and
-`olympus-supervisor-flags.patch` (same change as the commit).
+`relay_endpoint`, `companion`, `wallet_api`, `connect_proxy`, and, for a
+custody-gated run, `wallet_custody: "connection_owner_verified"`; no credentials
+or query secrets. The custody gate binds the child lifetime with a Darwin
+kqueue process event and checks the connected socket's exact reversed four-tuple
+through `/usr/sbin/lsof`. The same socket is then handed to `net/http`, so a
+listener replacement cannot receive the saved bridge token. Before child start,
+after child exit, on an unowned listener, or when ownership inspection fails,
+the transport sends no application bytes. Unsupported platforms refuse this
+opt-in flag.
 
 ## Pins
 
 - Upstream: `ethereum/zkapi` commit `045b444ea1b52538d1b40273c7cb6ed09468a052` (main, 2026-10-01).
 - Release tag: `clientd-v0.1.6` (an ancestor of the pin; plus three package-pin commits).
-- Fork version string: `0.1.6-olympus1`.
+- Fork version string: `0.1.6-olympus2`.
 - Go toolchain: `go1.27.1` (`GOTOOLCHAIN` is set by `build.sh`).
 - Branch: `olympus/supervisor-flags`.
 
@@ -46,23 +53,17 @@ query secrets. Full per-file description: the commit message and
 zkapi-clientd/olympus/build.sh
 ```
 
-Builds darwin/arm64 with `CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w -X main.version=0.1.6-olympus1"`,
+Builds darwin/arm64 with `CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w -X main.version=0.1.6-olympus2"`,
 writes `dist/zkapi-clientd`, `dist/SHA256SUMS` and `dist/third-party/` (licence
 texts for the linked Go modules), then rebuilds from a clean `git archive` copy
 in a temp dir and fails if the hashes differ. It builds committed `HEAD`
 for the second pass, so commit before trusting the check.
 
-Reference result (go1.27.1, 2026-10-07, macOS arm64): SHA-256
-`bffc86b70cbf409383970160f15f042ae57b8175d8102db7bcad4ea2ddbc37de`, 9,694,658
-bytes; identical to the earlier prototype build (`bffc86b7...`).
-
-Known limitation: the GitHub Actions macOS runner (setup-go go1.27.1, arm64) builds
-a different binary, SHA-256 `c5221f0df06b2470ed62a4bf0ce9bc6f1ab3e1aa8539145941ccd376548f84a3`,
-from the same commit. Each environment is self-consistent (two clean builds match),
-but builds are reproducible only per toolchain distribution: the local one is
-Homebrew's go1.27.1. Cause not yet isolated (suspect: Homebrew vs official
-toolchain build). Publish the hash of one named build environment, and resolve this
-before claiming cross-machine reproducibility.
+The `olympus1` build was reproducible only within one toolchain distribution;
+Homebrew and GitHub's official Go distribution produced different hashes from
+the same source. Publish the `olympus2` hash from one named build environment,
+and do not claim cross-machine reproducibility until that toolchain difference
+is resolved.
 
 Unit tests run on Linux in CI and locally: `cd zkapi-clientd && gofmt -l . && go vet ./... && go test -race ./...`.
 
@@ -91,16 +92,6 @@ Applicability check (2026-10-07): upstream `main` is still `045b444` (identical 
 the pin, 0 commits ahead); the newest tag is `clientd-v0.1.6`. The patch applies
 cleanly to both (`git apply --check`). It also applies to v0.1.5; it does not
 apply to v0.1.2 to v0.1.4, which predate SOCKS5 support.
-
-## TODO (F2 prerequisite, not done here)
-
-**TODO(F2): authenticated ownership of the managed wallet listener.** The
-patched daemon still sends its wallet bridge token to whatever process holds the
-wallet-API port during readiness polling, before ownership is verified (same
-exposure as upstream's configured `client_url`; a sandbox does not prevent it).
-Fix needed before any "route verified" claim: a child startup handshake or a
-daemon-side equivalent that proves the listener is the companion this process
-started, before the first token-bearing request. A "port free" check is not enough.
 
 ## Not done
 

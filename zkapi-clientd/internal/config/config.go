@@ -80,7 +80,8 @@ type Config struct {
 	Concurrency           int    `json:"concurrency"`
 	ZKAPI                 ZKAPI  `json:"zkapi"`
 	// CompanionProxyListen is a serve-time supervisor option, never saved.
-	CompanionProxyListen string `json:"-"`
+	CompanionProxyListen    string `json:"-"`
+	RequireCompanionCustody bool   `json:"-"`
 }
 
 func DefaultDir() (string, error) {

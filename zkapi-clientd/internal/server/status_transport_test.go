@@ -12,7 +12,7 @@ func TestActiveStatusReportsTransportEndpointsOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	api.Status = ServiceStatus{Backend: "zkapi", Network: "mainnet", Transport: &TransportStatus{Kind: "socks5", RelayEndpoint: "127.0.0.1:9150", Companion: "managed", WalletAPI: "127.0.0.1:47002", ConnectProxy: "127.0.0.1:47001"}}
+	api.Status = ServiceStatus{Backend: "zkapi", Network: "mainnet", Transport: &TransportStatus{Kind: "socks5", RelayEndpoint: "127.0.0.1:9150", Companion: "managed", WalletAPI: "127.0.0.1:47002", ConnectProxy: "127.0.0.1:47001", WalletCustody: "connection_owner_verified"}}
 	r := httptest.NewRequest(http.MethodGet, "/admin/status", nil)
 	r.Header.Set("Authorization", "Bearer "+testKey)
 	w := httptest.NewRecorder()
@@ -23,7 +23,7 @@ func TestActiveStatusReportsTransportEndpointsOnly(t *testing.T) {
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &got) != nil {
 		t.Fatal("status unavailable", w.Body.String())
 	}
-	want := map[string]string{"kind": "socks5", "relay_endpoint": "127.0.0.1:9150", "companion": "managed", "wallet_api": "127.0.0.1:47002", "connect_proxy": "127.0.0.1:47001"}
+	want := map[string]string{"kind": "socks5", "relay_endpoint": "127.0.0.1:9150", "companion": "managed", "wallet_api": "127.0.0.1:47002", "connect_proxy": "127.0.0.1:47001", "wallet_custody": "connection_owner_verified"}
 	if len(got.Transport) != len(want) {
 		t.Fatal("unexpected transport fields", w.Body.String())
 	}

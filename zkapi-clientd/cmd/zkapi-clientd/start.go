@@ -358,8 +358,13 @@ func runGuidedStart(ctx context.Context, dir string, args []string, ui setupProm
 	}
 	runtime := startRuntime{
 		testnet: prepareSepoliaAccess,
-		active:  resolveActiveConfig, probe: probeSetupService, serve: serve, companion: checkSetupCompanion,
-		fund:     runGuidedFunding,
+		active:  resolveActiveConfig, probe: probeSetupService, serve: serve,
+		companion: func(ctx context.Context, c config.Config) error {
+			return checkSetupCompanion(ctx, c)
+		},
+		fund: func(ctx context.Context, c config.Config, usd, model string, ui setupPrompter) error {
+			return runGuidedFunding(ctx, c, usd, model, ui)
+		},
 		interval: 500 * time.Millisecond, timeout: 90 * time.Second,
 	}
 	// A legacy start override also needs the original saved snapshot. Capture
@@ -545,13 +550,13 @@ func probeSetupService(ctx context.Context, c config.Config) (bool, error) {
 	return true, nil
 }
 
-func checkSetupCompanion(ctx context.Context, c config.Config) error {
+func checkSetupCompanion(ctx context.Context, c config.Config, custody ...*zkapi.CompanionCustody) error {
 	client, err := relay.NewClient(c.RelayURL)
 	if err != nil {
 		return err
 	}
 	defer client.CloseIdleConnections()
-	wallet, err := zkapi.New(zkConfig(c, client))
+	wallet, err := zkapi.New(zkConfig(c, client, custody...))
 	if err != nil {
 		return err
 	}

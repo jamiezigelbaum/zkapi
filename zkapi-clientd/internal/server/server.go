@@ -63,6 +63,7 @@ type TransportStatus struct {
 	Companion     string `json:"companion"` // managed or external
 	WalletAPI     string `json:"wallet_api"`
 	ConnectProxy  string `json:"connect_proxy,omitempty"`
+	WalletCustody string `json:"wallet_custody,omitempty"`
 }
 
 func New(backend Backend, key string, concurrency int) (*API, error) {

@@ -6,7 +6,7 @@
 set -euo pipefail
 
 GO_VERSION="go1.27.1"                  # pinned toolchain
-VERSION="0.1.6-olympus1"               # upstream clientd-v0.1.6 + Olympus patch
+VERSION="0.1.6-olympus2"               # upstream clientd-v0.1.6 + Olympus patches
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CLIENTD="$(cd "$HERE/.." && pwd)"
 REPO="$(git -C "$CLIENTD" rev-parse --show-toplevel)"

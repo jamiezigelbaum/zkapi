@@ -152,7 +152,8 @@ const serveOptionsHelp = `Supervisor options apply to this run only and are neve
   --relay-url URL                   Wisp relay or loopback SOCKS5 proxy (socks5://127.0.0.1:PORT)
   --companion-proxy-listen IP:PORT  fixed loopback address for the companion CONNECT proxy
   --wallet-api-listen IP:PORT       fixed loopback address for the managed companion API
-  --require-managed-companion       refuse to start when external_companion is configured`
+  --require-managed-companion       refuse to start when external_companion is configured
+  --require-companion-custody       verify every wallet connection belongs to the supervised child (macOS)`
 
 // Serving uses the saved network without rewriting wallet state. Supervisor
 // options change only this process's in-memory copy.
@@ -162,6 +163,7 @@ func serveConfig(c config.Config, args []string) (config.Config, error) {
 	f.StringVar(&c.CompanionProxyListen, "companion-proxy-listen", "", "")
 	walletListen := f.String("wallet-api-listen", "", "")
 	requireManaged := f.Bool("require-managed-companion", false, "")
+	f.BoolVar(&c.RequireCompanionCustody, "require-companion-custody", false, "")
 	if err := f.Parse(args); err != nil {
 		return config.Config{}, err
 	}
@@ -173,8 +175,11 @@ func serveConfig(c config.Config, args []string) (config.Config, error) {
 	if empty {
 		return config.Config{}, errors.New("serve options require nonempty values")
 	}
-	if c.ZKAPI.ExternalCompanion && (*requireManaged || c.CompanionProxyListen != "" || *walletListen != "") {
+	if c.ZKAPI.ExternalCompanion && (*requireManaged || c.RequireCompanionCustody || c.CompanionProxyListen != "" || *walletListen != "") {
 		return config.Config{}, errors.New("a managed companion is required, but this configuration uses external_companion")
+	}
+	if c.RequireCompanionCustody && !zkapi.CompanionCustodySupported() {
+		return config.Config{}, errors.New("managed companion custody is not supported on this platform")
 	}
 	for _, address := range []string{c.CompanionProxyListen, *walletListen} {
 		if err := fixedLoopback(address); err != nil {
@@ -206,8 +211,12 @@ func fixedLoopback(address string) error {
 	return nil
 }
 
-func zkConfig(c config.Config, client *http.Client) zkapi.Config {
-	return zkapi.Config{ClientURL: c.ZKAPI.ClientURL, BridgeToken: c.ZKAPI.BridgeToken, Network: c.ZKAPI.Network, HTTPClient: client, KeyReuseWindow: time.Duration(c.KeyReuseWindowSeconds) * time.Second}
+func zkConfig(c config.Config, client *http.Client, custody ...*zkapi.CompanionCustody) zkapi.Config {
+	var owner *zkapi.CompanionCustody
+	if len(custody) != 0 {
+		owner = custody[0]
+	}
+	return zkapi.Config{ClientURL: c.ZKAPI.ClientURL, BridgeToken: c.ZKAPI.BridgeToken, Network: c.ZKAPI.Network, HTTPClient: client, KeyReuseWindow: time.Duration(c.KeyReuseWindowSeconds) * time.Second, CompanionCustody: owner}
 }
 
 type zkInference struct{ *zkapi.Client }
@@ -243,7 +252,7 @@ func serve(ctx context.Context, dir string, c config.Config, out io.Writer) erro
 	return serveSnapshot(ctx, dir, c, c, out)
 }
 
-func serveSnapshot(ctx context.Context, dir string, c, expected config.Config, out io.Writer) error {
+func serveSnapshot(ctx context.Context, dir string, c, expected config.Config, out io.Writer, custody ...*zkapi.CompanionCustody) error {
 	logger := log.New(out, "zkapi-clientd ", log.LstdFlags)
 	logger.Print("Starting local API service")
 	lock, err := os.OpenFile(filepath.Join(dir, "daemon.lock"), os.O_CREATE|os.O_RDWR, 0600)
@@ -290,7 +299,14 @@ func serveSnapshot(ctx context.Context, dir string, c, expected config.Config, o
 	if err != nil {
 		return err
 	}
-	zc := zkConfig(c, client)
+	var owner *zkapi.CompanionCustody
+	if len(custody) != 0 {
+		owner = custody[0]
+	}
+	if c.RequireCompanionCustody && owner == nil {
+		return errors.New("managed companion custody was required but not initialized")
+	}
+	zc := zkConfig(c, client, owner)
 	wallet, err := zkapi.New(zc)
 	if err != nil {
 		return err
@@ -324,14 +340,37 @@ func serveSnapshot(ctx context.Context, dir string, c, expected config.Config, o
 		if err := cmd.Start(); err != nil {
 			return errors.New("failed to start zkAPI companion")
 		}
+		childPID := cmd.Process.Pid
+		if owner != nil {
+			if err := owner.Activate(childPID); err != nil {
+				_ = cmd.Process.Kill()
+				_ = cmd.Wait()
+				return err
+			}
+			transportStatus.WalletCustody = "connection_owner_verified"
+		}
 		childDone = make(chan error, 1)
-		go func() { childDone <- cmd.Wait(); close(childDone) }()
+		go func() {
+			err := cmd.Wait()
+			if owner != nil {
+				owner.Retire(childPID)
+			}
+			childDone <- err
+			close(childDone)
+		}()
 		defer func() {
 			cancel()
 			select {
 			case <-childDone:
 			case <-time.After(7 * time.Second):
 				_ = cmd.Process.Kill()
+				select {
+				case <-childDone:
+				case <-time.After(2 * time.Second):
+				}
+			}
+			if owner != nil {
+				owner.Retire(childPID)
 			}
 		}()
 	}
@@ -469,6 +508,9 @@ func resolveActiveConfig(ctx context.Context, c config.Config) (config.Config, e
 		active.Backend != "zkapi" ||
 		(active.Network != "mainnet" && active.Network != "sepolia") {
 		return config.Config{}, errors.New("local service returned invalid active-mode metadata; restart it with the current client")
+	}
+	if c.RequireCompanionCustody && (active.Transport == nil || active.Transport.Companion != "managed" || active.Transport.WalletCustody != "connection_owner_verified") {
+		return config.Config{}, errors.New("local service does not prove managed companion connection ownership")
 	}
 	c.Backend = active.Backend
 	c.ZKAPI.Network = active.Network

@@ -5,16 +5,18 @@ https://github.com/ethereum/zkapi, copyright (c) 2026 Open Anonymity Team,
 licensed under the MIT License (see `LICENSE` in this directory and in the
 parent directory).
 
-The modifications are the commit on branch `olympus/supervisor-flags`
-("clientd: opt-in supervisor flags for serve and transport status"), applied
-on upstream commit `045b444ea1b52538d1b40273c7cb6ed09468a052`
+The modifications are the Olympus supervisor and managed-companion custody
+changes, applied on upstream commit `045b444ea1b52538d1b40273c7cb6ed09468a052`
 (`clientd-v0.1.6` plus three package-pin commits). The same change is kept as a
 patch file, `olympus-supervisor-flags.patch`, in this directory, and
-`git diff 045b444e..olympus/supervisor-flags -- zkapi-clientd` shows it exactly.
-Modified files: `cmd/zkapi-clientd/main.go`, `internal/config/config.go`,
+`git diff 045b444e -- zkapi-clientd` shows it exactly from a checked-out fork
+revision. Modified files include `cmd/zkapi-clientd/main.go`,
+`cmd/zkapi-clientd/configured_runtime.go`, `cmd/zkapi-clientd/start.go`,
+`cmd/zkapi-clientd/guided_funding.go`, `internal/config/config.go`,
 `internal/relay/connect.go`, `internal/relay/relay.go`,
-`internal/server/server.go`; new test files only otherwise. Files under
-`olympus/` are additions by the Olympus project.
+`internal/server/server.go`, and `internal/zkapi/client.go`; the custody
+implementation and focused tests are new files under `internal/zkapi/`. Files
+under `olympus/` are additions by the Olympus project.
 
 Not affiliated with, or endorsed by, the upstream authors.
 

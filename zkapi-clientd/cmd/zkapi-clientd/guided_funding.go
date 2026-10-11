@@ -53,12 +53,12 @@ func (s localGuidedFunding) Resume(ctx context.Context, amount uint64) (zkapi.Ad
 	return requestFunding(ctx, s.config, http.MethodPost, "/admin/funding/deposit", map[string]uint64{"amount": amount})
 }
 
-func runGuidedFunding(ctx context.Context, c config.Config, usdText, _ string, ui setupPrompter) error {
+func runGuidedFunding(ctx context.Context, c config.Config, usdText, _ string, ui setupPrompter, custody ...*zkapi.CompanionCustody) error {
 	transport, err := relay.NewClient(c.RelayURL)
 	if err != nil {
 		return err
 	}
-	wallet, err := zkapi.New(zkConfig(c, transport))
+	wallet, err := zkapi.New(zkConfig(c, transport, custody...))
 	if err != nil {
 		return err
 	}

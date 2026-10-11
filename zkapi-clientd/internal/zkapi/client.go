@@ -32,12 +32,13 @@ const (
 // Config is the Go-side bridge configuration. A companion must be built with
 // companion.patch; unpatched or unauthenticated daemons are rejected.
 type Config struct {
-	ClientURL        string        `json:"client_url"`
-	BridgeToken      string        `json:"bridge_token"`
-	Network          string        `json:"network"` // empty means mainnet; Sepolia is explicit
-	InferenceBaseURL string        `json:"inference_base_url"`
-	HTTPClient       *http.Client  `json:"-"` // remote HTTPS, direct or over Wisp as configured
-	KeyReuseWindow   time.Duration `json:"-"` // fixed, in-memory window; zero disables reuse
+	ClientURL        string            `json:"client_url"`
+	BridgeToken      string            `json:"bridge_token"`
+	Network          string            `json:"network"` // empty means mainnet; Sepolia is explicit
+	InferenceBaseURL string            `json:"inference_base_url"`
+	HTTPClient       *http.Client      `json:"-"` // remote HTTPS, direct or over Wisp as configured
+	KeyReuseWindow   time.Duration     `json:"-"` // fixed, in-memory window; zero disables reuse
+	CompanionCustody *CompanionCustody `json:"-"` // optional owner proof for every new wallet connection
 }
 
 type Client struct {
@@ -112,7 +113,11 @@ func New(config Config) (*Client, error) {
 	inference := *config.HTTPClient
 	inference.CheckRedirect = noRedirect
 	inference.Jar = nil
-	local := &http.Client{Transport: &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext}, CheckRedirect: noRedirect, Timeout: 4 * time.Minute}
+	dialContext := (&net.Dialer{Timeout: 5 * time.Second}).DialContext
+	if config.CompanionCustody != nil {
+		dialContext = config.CompanionCustody.DialContext
+	}
+	local := &http.Client{Transport: &http.Transport{Proxy: nil, DialContext: dialContext}, CheckRedirect: noRedirect, Timeout: 4 * time.Minute}
 	return &Client{config: config, local: local, inference: &inference, usedLeases: make(map[[32]byte]uint64), requestSlot: make(chan struct{}, 1), settlementPoll: 5 * time.Second, settlementWake: make(chan struct{}, 1), now: time.Now}, nil
 }
 

@@ -18,14 +18,23 @@ func configurationRequired(err error) error {
 	return fmt.Errorf("%w. Run zkapi-clientd config to review and complete configuration (use the same --config-dir if set)", err)
 }
 
-func configuredRuntime(expected config.Config) startRuntime {
+func configuredRuntime(expected config.Config, custody ...*zkapi.CompanionCustody) startRuntime {
+	var owner *zkapi.CompanionCustody
+	if len(custody) != 0 {
+		owner = custody[0]
+	}
 	return startRuntime{
 		testnet: prepareSepoliaAccess,
-		probe:   probeSetupService, companion: checkSetupCompanion,
+		probe:   probeSetupService,
 		serve: func(ctx context.Context, dir string, c config.Config, out io.Writer) error {
-			return serveSnapshot(ctx, dir, c, expected, out)
+			return serveSnapshot(ctx, dir, c, expected, out, owner)
 		},
-		fund:     runGuidedFunding,
+		companion: func(ctx context.Context, c config.Config) error {
+			return checkSetupCompanion(ctx, c, owner)
+		},
+		fund: func(ctx context.Context, c config.Config, usd, model string, ui setupPrompter) error {
+			return runGuidedFunding(ctx, c, usd, model, ui, owner)
+		},
 		interval: 500 * time.Millisecond, timeout: 90 * time.Second,
 	}
 }
@@ -34,10 +43,29 @@ func configuredRuntime(expected config.Config) startRuntime {
 // It uses the same authenticated startup checks as config, then stays running.
 func runConfiguredServe(ctx context.Context, dir string, c, expected config.Config, out io.Writer) error {
 	ui := &noninteractiveSetup{out: out}
-	runtime := configuredRuntime(expected)
+	var custody *zkapi.CompanionCustody
+	var err error
+	if c.RequireCompanionCustody {
+		custody, err = zkapi.NewCompanionCustody()
+		if err != nil {
+			return err
+		}
+	}
+	runtime := configuredRuntime(expected, custody)
+	if custody != nil {
+		// An opt-in supervised run must never attach to or authenticate an
+		// existing daemon-port occupant. Start our owned server unconditionally;
+		// its bind fails closed on collision. After start, the child lifetime is
+		// the in-process readiness signal and wallet probes use guarded sockets.
+		runtime.probe = func(context.Context, config.Config) (bool, error) {
+			return custody.IsActive(), nil
+		}
+	}
 	runtime.testnet = checkSepoliaAccess
-	runtime.fund = checkConfiguredZKAPI
-	err := guidedStart(ctx, dir, startOptions{prepared: &c, checkOnly: true}, ui, out, runtime)
+	runtime.fund = func(ctx context.Context, c config.Config, usd, model string, ui setupPrompter) error {
+		return checkConfiguredZKAPI(ctx, c, usd, model, ui, custody)
+	}
+	err = guidedStart(ctx, dir, startOptions{prepared: &c, checkOnly: true}, ui, out, runtime)
 	if ctx.Err() != nil {
 		return nil
 	}
@@ -69,7 +97,7 @@ func (w setupUIWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func checkConfiguredZKAPI(ctx context.Context, c config.Config, _, _ string, ui setupPrompter) error {
+func checkConfiguredZKAPI(ctx context.Context, c config.Config, _, _ string, ui setupPrompter, custody ...*zkapi.CompanionCustody) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	client, err := relay.NewClient(c.RelayURL)
@@ -77,7 +105,7 @@ func checkConfiguredZKAPI(ctx context.Context, c config.Config, _, _ string, ui 
 		return err
 	}
 	defer client.CloseIdleConnections()
-	wallet, err := zkapi.New(zkConfig(c, client))
+	wallet, err := zkapi.New(zkConfig(c, client, custody...))
 	if err != nil {
 		return err
 	}
@@ -129,7 +157,9 @@ func runConfigActionWithUSD(ctx context.Context, dir string, c config.Config, ac
 			return configurePayment(ctx, c, action, ui)
 		}
 	case "status":
-		runtime.fund = checkConfiguredZKAPI
+		runtime.fund = func(ctx context.Context, c config.Config, usd, model string, ui setupPrompter) error {
+			return checkConfiguredZKAPI(ctx, c, usd, model, ui)
+		}
 	default:
 		return errors.New("unknown configuration action")
 	}

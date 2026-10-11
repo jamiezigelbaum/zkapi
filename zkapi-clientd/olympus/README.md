@@ -93,6 +93,20 @@ the pin, 0 commits ahead); the newest tag is `clientd-v0.1.6`. The patch applies
 cleanly to both (`git apply --check`). It also applies to v0.1.5; it does not
 apply to v0.1.2 to v0.1.4, which predate SOCKS5 support.
 
+## Release
+
+`zkapi-clientd/olympus/bundle.sh TARGET UPSTREAM_ARCHIVE OUT` makes one release
+bundle: upstream's `clientd-v0.1.6` archive (hash checked against
+`packaging/releases/clientd-0.1.6.json`) with `zkapi-clientd` replaced by this
+fork's build (built twice, refused if they differ), `VERSION` set to the fork
+version, `NOTICE-modified.md`, and `share/zkapi-clientd/olympus-build.json`
+recording both hashes. `zkapi-walletd` and the proof-setup files stay
+upstream's bytes. Pushing a `clientd-v<version>` tag that matches `build.sh`
+runs `.github/workflows/olympus-release.yml`: four bundles, a smoke run on each
+platform's own runner, `SHA256SUMS`, build-provenance attestations
+(`gh attestation verify <file> -R jamiezigelbaum/zkapi`), and a published
+release. Olympus pins those hashes in `src/core/managed-tools.ts`.
+
 ## Not done
 
 - **No signing or notarization.** The binary is unsigned and not notarized;

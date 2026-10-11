@@ -1,0 +1,92 @@
+# Olympus fork release: a clientd-vX.Y.Z-olympusN tag publishes four bundles
+# (upstream's verified archive with the fork's daemon swapped in), SHA256SUMS,
+# and Sigstore-signed build-provenance attestations for each file.
+# workflow_dispatch builds and smoke-tests without publishing.
+name: olympus-release
+on:
+  push:
+    tags: ['clientd-v*-olympus*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  bundle:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.27.1', cache: false}
+      - name: Download upstream clientd-v0.1.6 archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download clientd-v0.1.6 -R ethereum/zkapi -p 'zkapi-clientd_0.1.6_*.tar.gz' -D "$RUNNER_TEMP/upstream"
+      - name: Build bundles (each daemon built twice; refused if they differ)
+        shell: bash
+        run: |
+          set -euo pipefail
+          for target in darwin-arm64 darwin-amd64 linux-amd64 linux-arm64; do
+            zkapi-clientd/olympus/bundle.sh "$target" "$RUNNER_TEMP/upstream/zkapi-clientd_0.1.6_${target/-/_}.tar.gz" release
+          done
+          version=$(sed -n 's/^VERSION="\([^"]*\)".*/\1/p' zkapi-clientd/olympus/build.sh)
+          if [[ "$GITHUB_REF_TYPE" = tag && "$GITHUB_REF_NAME" != "clientd-v$version" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match build.sh version $version" >&2; exit 1
+          fi
+          (cd release && sha256sum *.tar.gz > SHA256SUMS && cat SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: olympus-release
+          path: release/
+          if-no-files-found: error
+  smoke:
+    needs: bundle
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: macos-15, target: darwin_arm64}
+          - {runner: macos-15-intel, target: darwin_amd64}
+          - {runner: ubuntu-24.04, target: linux_amd64}
+          - {runner: ubuntu-24.04-arm, target: linux_arm64}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: {name: olympus-release, path: release}
+      - name: Run the bundled programs
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^VERSION="\([^"]*\)".*/\1/p' zkapi-clientd/olympus/build.sh)
+          (cd release && (sha256sum -c SHA256SUMS 2>/dev/null || shasum -a 256 -c SHA256SUMS))
+          smoke="$RUNNER_TEMP/smoke"; mkdir -p "$smoke"
+          tar -xzf "release/zkapi-clientd_${version}_${{ matrix.target }}.tar.gz" -C "$smoke"
+          test "$(cat "$smoke/VERSION")" = "$version"
+          test "$("$smoke/zkapi-clientd" --version | head -1)" = "zkapi-clientd $version"
+          help=$("$smoke/zkapi-clientd" serve --help 2>&1)
+          for flag in --relay-url --companion-proxy-listen --wallet-api-listen --require-managed-companion --require-companion-custody; do
+            grep -q -- "$flag" <<<"$help" || { echo "serve --help lacks $flag" >&2; exit 1; }
+          done
+          "$smoke/zkapi-walletd" --help >/dev/null
+          for f in manifest.json request.pk request.vk withdrawal.pk withdrawal.vk; do test -s "$smoke/share/zkapi-clientd/proof-setup/$f"; done
+          if [[ "$RUNNER_OS" = macOS ]]; then codesign -dv "$smoke/zkapi-clientd" 2>&1 | head -3 || true; fi
+  publish:
+    needs: smoke
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {name: olympus-release, path: release}
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'release/*'
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release/*.tar.gz release/SHA256SUMS -R "$GITHUB_REPOSITORY" \
+            --verify-tag --latest=false --title "zkapi-clientd ${GITHUB_REF_NAME#clientd-v} (Olympus fork)" \
+            --notes "Upstream clientd-v0.1.6 bundles (hashes pinned in zkapi-clientd/packaging/releases/clientd-0.1.6.json) with zkapi-clientd rebuilt from this fork at ${GITHUB_SHA} (go1.27.1, reproducible: two builds compared). zkapi-walletd and share/zkapi-clientd/ are byte-for-byte upstream's; see share/zkapi-clientd/olympus-build.json. Verify: sha256sum -c SHA256SUMS; gh attestation verify <file> -R ${GITHUB_REPOSITORY}. Not Developer ID signed or notarized."

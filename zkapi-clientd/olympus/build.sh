@@ -42,7 +42,9 @@ build_confine() { # build_confine <module-dir> <output>
   ( cd "$1" && go build -trimpath -buildvcs=false -tags= \
       -ldflags="-s -w -X main.version=$VERSION" -o "$2" ./cmd/zkapi-confine )
 }
-sha() { shasum -a 256 "$1" | awk '{print $1}'; }
+# shasum ships with macOS and Debian's perl; Arch/Omarchy has only sha256sum.
+if command -v sha256sum >/dev/null 2>&1; then sha256() { sha256sum "$@"; }; else sha256() { shasum -a 256 "$@"; }; fi
+sha() { sha256 "$1" | awk '{print $1}'; }
 
 rm -rf "$DIST"; mkdir -p "$DIST"
 build_daemon "$CLIENTD" "$DIST/zkapi-clientd"
@@ -67,7 +69,7 @@ if [ "$target" = linux-amd64 ]; then
   if [ "$FIRST_CONFINE" != "$SECOND_CONFINE" ]; then
     echo "build.sh: zkapi-confine NOT REPRODUCIBLE: $FIRST_CONFINE != $SECOND_CONFINE" >&2; exit 1
   fi
-  ( cd "$DIST" && shasum -a 256 zkapi-clientd bin/zkapi-confine > SHA256SUMS )
+  ( cd "$DIST" && sha256 zkapi-clientd bin/zkapi-confine > SHA256SUMS )
 
   commit="$(git -C "$REPO" rev-parse HEAD)"
   python3 - "$DIST/reproducibility.json" "$VERSION" "$GO_VERSION" "$commit" \
@@ -131,7 +133,7 @@ with open(path, "w", encoding="utf-8") as output:
     output.write("\n")
 PY
 else
-  ( cd "$DIST" && shasum -a 256 zkapi-clientd > SHA256SUMS )
+  ( cd "$DIST" && sha256 zkapi-clientd > SHA256SUMS )
 fi
 
 # Licence texts for every Go module linked into the binary (Go-only; the

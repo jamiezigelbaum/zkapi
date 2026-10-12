@@ -2,7 +2,7 @@
 
 Maintained fork of `zkapi-clientd` (Go) from https://github.com/ethereum/zkapi,
 carrying opt-in supervisor and managed-companion custody patches plus a
-reproducible build. Nothing here changes wallet, key, or protocol code. The
+standalone Linux x64 confinement launcher and reproducible build. Nothing here changes wallet, key, or protocol code. The
 Rust companion is not built or modified here.
 
 ## Why a fork
@@ -53,7 +53,7 @@ opt-in flag.
 zkapi-clientd/olympus/build.sh
 ```
 
-Builds darwin/arm64 with `CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w -X main.version=0.1.6-olympus2"`,
+The default builds darwin/arm64 with `CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w -X main.version=0.1.6-olympus2"`,
 writes `dist/zkapi-clientd`, `dist/SHA256SUMS` and `dist/third-party/` (licence
 texts for the linked Go modules), then rebuilds from a clean `git archive` copy
 in a temp dir and fails if the hashes differ. It builds committed `HEAD`
@@ -74,6 +74,48 @@ Unit tests run on Linux in CI and locally: `cd zkapi-clientd && gofmt -l . && go
 3. Install the pinned Go, run `zkapi-clientd/olympus/build.sh`, compare `dist/SHA256SUMS`
    with the published hash. A reproducible build shows the binary matches this
    source; it does not show who built the published one (provenance).
+
+## Linux x64 confinement launcher (W4 step 1)
+
+`cmd/zkapi-confine` ports the reviewed Olympus prototype at `afdb5406`.
+It is standard-library-only and runs only on Linux amd64. Other targets compile
+only a refusal stub (exit 78); the Linux code also checks the runtime platform.
+The three-stage boundary preserves user/network/PID namespaces, capability
+removal, no-new-privileges, Landlock ABI >= 4, seccomp, inherited-descriptor
+sanitization, private status fd 3, authenticated API bridge and fixed Tor bridge.
+`--version`, `run`, `check` and `probe` are supported; stage entry points and
+`noop` serve the launcher itself. Runtime failure injection, ABI emulation and
+pair-type overrides have been removed. Production ignores all former prototype
+environment switches. Test-only ablations require the `qualification` build tag.
+
+```sh
+bash zkapi-clientd/olympus/build.sh linux-amd64
+zkapi-clientd/olympus/dist/bin/zkapi-confine --version
+zkapi-clientd/olympus/dist/bin/zkapi-confine check
+```
+
+The Linux build includes the daemon and `bin/zkapi-confine`, compares both
+against a second build from committed HEAD, and records both build hashes and
+the build environment under `olympus/dist/`. The Linux x64 release bundle adds
+`bin/zkapi-confine`; Mac bundles retain their existing layout and metadata.
+The version remains `0.1.6-olympus2` until the owner's separate release step.
+Do not publish these changes under an existing immutable release tag.
+
+Unit tests cover arguments, the prototype seccomp golden and policy decisions,
+control descriptor passing, harden-before-go ordering, HMAC authentication,
+bridge byte pumping/pending-slot limits, check classification and descriptor
+fallback failure. The Linux CI job adds reproducibility and environment artifacts.
+
+The [host qualification instructions](../cmd/zkapi-confine/qualification/README.md)
+run normal rows against the release binary and negative controls against
+separate tagged fixtures. A real Omarchy-class host run remains required;
+a build-container refusal is not a qualification pass. This commit does not
+activate confinement in Olympus or change release publishing triggers.
+
+Preserved prototype limits: network confinement leaves file access unrestricted;
+bridge slots limit pending handoffs rather than all established streams. The
+only extra protocol cleanup closes an unexpected descriptor received with the
+initial go message. No wire-format or intended confinement-policy change.
 
 ## Rebasing on upstream
 

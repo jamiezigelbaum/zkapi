@@ -18,6 +18,15 @@ revision. Modified files include `cmd/zkapi-clientd/main.go`,
 implementation and focused tests are new files under `internal/zkapi/`. Files
 under `olympus/` are additions by the Olympus project.
 
+The standalone `cmd/zkapi-confine/` launcher, unit tests and `qualification/`
+harness are Olympus additions, ported from the reviewed Olympus prototype at
+`afdb5406` (W4 step 1). The launcher uses only the Go standard library and
+supports Linux amd64 only. Production excludes prototype fault/ABI/pair knobs
+and test-only ablations. Olympus build/bundle scripts and CI add reproducible
+Linux x64 launcher packaging and build-environment records; Mac bundle layout
+is unchanged. `olympus-supervisor-flags.patch` records only the earlier daemon
+patches, not these launcher additions; Git history is the complete source record.
+
 Not affiliated with, or endorsed by, the upstream authors.
 
 ## go-ethereum (LGPL-3.0)

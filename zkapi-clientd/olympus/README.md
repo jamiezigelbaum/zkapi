@@ -2,7 +2,7 @@
 
 Maintained fork of `zkapi-clientd` (Go) from https://github.com/ethereum/zkapi,
 carrying opt-in supervisor and managed-companion custody patches plus a
-reproducible build. Nothing here changes wallet, key, or protocol code. The
+standalone Linux x64 confinement launcher and reproducible build. Nothing here changes wallet, key, or protocol code. The
 Rust companion is not built or modified here.
 
 ## Why a fork
@@ -43,7 +43,7 @@ opt-in flag.
 
 - Upstream: `ethereum/zkapi` commit `045b444ea1b52538d1b40273c7cb6ed09468a052` (main, 2026-10-01).
 - Release tag: `clientd-v0.1.6` (an ancestor of the pin; plus three package-pin commits).
-- Fork version string: `0.1.6-olympus2`.
+- Fork version string: `0.1.6-olympus3`.
 - Go toolchain: `go1.27.1` (`GOTOOLCHAIN` is set by `build.sh`).
 - Branch: `olympus/supervisor-flags`.
 
@@ -53,7 +53,7 @@ opt-in flag.
 zkapi-clientd/olympus/build.sh
 ```
 
-Builds darwin/arm64 with `CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w -X main.version=0.1.6-olympus2"`,
+The default builds darwin/arm64 with `CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w -X main.version=0.1.6-olympus3"`,
 writes `dist/zkapi-clientd`, `dist/SHA256SUMS` and `dist/third-party/` (licence
 texts for the linked Go modules), then rebuilds from a clean `git archive` copy
 in a temp dir and fails if the hashes differ. It builds committed `HEAD`
@@ -61,7 +61,7 @@ for the second pass, so commit before trusting the check.
 
 The `olympus1` build was reproducible only within one toolchain distribution;
 Homebrew and GitHub's official Go distribution produced different hashes from
-the same source. Publish the `olympus2` hash from one named build environment,
+the same source. Publish the `olympus3` hash from one named build environment,
 and do not claim cross-machine reproducibility until that toolchain difference
 is resolved.
 
@@ -74,6 +74,65 @@ Unit tests run on Linux in CI and locally: `cd zkapi-clientd && gofmt -l . && go
 3. Install the pinned Go, run `zkapi-clientd/olympus/build.sh`, compare `dist/SHA256SUMS`
    with the published hash. A reproducible build shows the binary matches this
    source; it does not show who built the published one (provenance).
+
+## Linux x64 confinement launcher (W4 step 1)
+
+`cmd/zkapi-confine` ports the reviewed Olympus prototype at `afdb5406`.
+It is standard-library-only and runs only on Linux amd64. Other targets compile
+only a refusal stub (exit 78); the Linux code also checks the runtime platform.
+The three-stage boundary preserves user/network/PID namespaces, capability
+removal, no-new-privileges, Landlock ABI >= 4, seccomp, inherited-descriptor
+sanitization, private status fd 3, authenticated API bridge and fixed Tor bridge.
+`--version`, `run`, `check` and `probe` are supported; stage entry points and
+`noop` serve the launcher itself. Runtime failure injection, ABI emulation and
+pair-type overrides have been removed. Production ignores all former prototype
+environment switches. Test-only ablations require the `qualification` build tag.
+
+```sh
+bash zkapi-clientd/olympus/build.sh linux-amd64
+zkapi-clientd/olympus/dist/bin/zkapi-confine --version
+zkapi-clientd/olympus/dist/bin/zkapi-confine check
+```
+
+The Linux build includes the daemon and `bin/zkapi-confine`, compares both
+against a second build from committed HEAD, and records both build hashes and
+the build environment under `olympus/dist/`. The Linux x64 release bundle adds
+`bin/zkapi-confine`; Mac bundles retain their existing layout and metadata.
+The prepared release version is `0.1.6-olympus3`.
+Do not publish these changes under an existing immutable release tag.
+
+Linux amd64 release-preparation hashes (2026-10-12), copied directly from
+`dist/SHA256SUMS` after two matching builds on Sparta with the official
+`go1.27.1.linux-amd64` toolchain:
+
+```text
+00948dc24076397a058ce71e8960b1484e1b6a096a50573a0b7acb80376d5bdc  zkapi-clientd
+d232669ee1e346874712b5d5c64623caf747c23da45fe36f1eee56ff7b10b796  bin/zkapi-confine
+```
+
+Validation passed: launcher vet and race tests under release, `qualification`
+and `qualification,qualification_adversary`; workflow YAML parsing; reproducible
+bundles for all four targets; and the new launcher smoke assertions against
+each bundle. Both environment sidecars omit hostname fields. Qualification
+report hashes and commit matched the inputs; namespace refusal in the build
+container is not real-host qualification. Native Mac/arm64 program execution
+remains for the release workflow runners.
+
+Unit tests cover arguments, the prototype seccomp golden and policy decisions,
+control descriptor passing, harden-before-go ordering, HMAC authentication,
+bridge byte pumping/pending-slot limits, check classification and descriptor
+fallback failure. The Linux CI job adds reproducibility and environment artifacts.
+
+The [host qualification instructions](../cmd/zkapi-confine/qualification/README.md)
+run normal rows against the release binary and negative controls against
+separate tagged fixtures. A real Omarchy-class host run remains required;
+a build-container refusal is not a qualification pass. This commit does not
+activate confinement in Olympus or change release publishing triggers.
+
+Preserved prototype limits: network confinement leaves file access unrestricted;
+bridge slots limit pending handoffs rather than all established streams. The
+only extra protocol cleanup closes an unexpected descriptor received with the
+initial go message. No wire-format or intended confinement-policy change.
 
 ## Rebasing on upstream
 
@@ -109,6 +168,13 @@ release. Olympus pins those hashes in `src/core/managed-tools.ts`.
 
 ## Not done
 
+- **P3-2: Real-kernel descriptor fallback coverage.** The `close_range`/`fcntl`
+  failure paths currently have unit coverage only. Consider a compile-time
+  `qualification_cloexec_fallback` fixture to verify fallback reaches ready on
+  a real kernel, without restoring production fault switches.
+- **P3-5: Dead arm64 paths.** Remove the unreachable arm64 code in `seccomp.go`
+  and `probe.go` when arm64 confinement is designed, with fresh syscall numbers
+  and a fresh review.
 - **No signing or notarization.** The binary is unsigned and not notarized;
   this must be added (Developer ID, hardened runtime) before shipping inside a
   signed app. CI artifacts are unsigned.

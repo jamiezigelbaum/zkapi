@@ -1,5 +1,10 @@
 # zkAPI
 
+This is the [Olympus fork](zkapi-clientd/olympus/README.md). It adds opt-in
+supervision and a standalone Linux x64 confinement launcher, `zkapi-confine`.
+The launcher is not yet activated in Olympus; real-host qualification and
+integration remain separate steps.
+
 zkAPI lets you pay for AI and other APIs with ETH and make unlinkable requests.
 It keeps API usage separate from your on-chain deposit: the service can verify
 that you can pay without learning which deposit is yours.

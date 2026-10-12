@@ -51,6 +51,14 @@ jobs:
         run: go vet -tags= ./cmd/zkapi-confine
       - name: Race-test release launcher
         run: go test -race -tags= ./cmd/zkapi-confine
+      - name: Vet and test qualification tag sets
+        shell: bash
+        run: |
+          set -euo pipefail
+          for tags in qualification qualification,qualification_adversary; do
+            go vet -tags="$tags" ./cmd/zkapi-confine
+            go test -race -tags="$tags" ./cmd/zkapi-confine
+          done
       - name: Compile qualification fixtures (CI only)
         run: bash cmd/zkapi-confine/qualification/build.sh "$RUNNER_TEMP/confine-fixtures"
       - name: Reproducible Linux build (fails if either binary differs)

@@ -66,6 +66,21 @@ jobs:
           for flag in --relay-url --companion-proxy-listen --wallet-api-listen --require-managed-companion --require-companion-custody; do
             grep -q -- "$flag" <<<"$help" || { echo "serve --help lacks $flag" >&2; exit 1; }
           done
+          launcher="$smoke/bin/zkapi-confine"
+          if [[ "${{ matrix.target }}" = linux_amd64 ]]; then
+            test "$("$launcher" --version)" = "zkapi-confine $version"
+            expected=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["zkapi_confine_sha256"])' "$smoke/share/zkapi-clientd/olympus-build.json")
+            test "$(sha256sum "$launcher" | cut -d ' ' -f 1)" = "$expected"
+            status=0
+            "$launcher" holdlisten >"$RUNNER_TEMP/holdlisten.out" 2>&1 || status=$?
+            test "$status" -eq 64
+            status=0
+            "$launcher" check >"$RUNNER_TEMP/confine-check.json" || status=$?
+            test "$status" -eq 0 || test "$status" -eq 78
+            python3 -m json.tool "$RUNNER_TEMP/confine-check.json"
+          else
+            test ! -e "$launcher" && test ! -L "$launcher"
+          fi
           "$smoke/zkapi-walletd" --help >/dev/null
           for f in manifest.json request.pk request.vk withdrawal.pk withdrawal.vk; do test -s "$smoke/share/zkapi-clientd/proof-setup/$f"; done
           if [[ "$RUNNER_OS" = macOS ]]; then codesign -dv "$smoke/zkapi-clientd" 2>&1 | head -3 || true; fi

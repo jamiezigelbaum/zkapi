@@ -171,7 +171,6 @@ if [ "$target" = linux-amd64 ]; then
     "$first_confine" "$second_confine" <<'PY'
 import json
 import platform
-import socket
 import subprocess
 import sys
 
@@ -215,8 +214,7 @@ metadata = {
     },
     "environment": {
         "go_env": json.loads(subprocess.check_output(["go", "env", "-json", *go_env_fields], text=True)),
-        "host": socket.gethostname(),
-        "kernel": platform.uname()._asdict(),
+        "kernel": {key: value for key, value in platform.uname()._asdict().items() if key != "node"},
     },
     "go_toolchain": toolchain,
     "source_commit": commit,

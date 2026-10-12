@@ -12,7 +12,7 @@
 set -euo pipefail
 
 GO_VERSION="go1.27.1"                  # pinned toolchain
-VERSION="0.1.6-olympus2"               # upstream clientd-v0.1.6 + Olympus patches
+VERSION="0.1.6-olympus3"               # upstream clientd-v0.1.6 + Olympus patches
 target="${1:-darwin-arm64}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CLIENTD="$(cd "$HERE/.." && pwd)"
@@ -76,7 +76,6 @@ if [ "$target" = linux-amd64 ]; then
     "$FIRST_DAEMON" "$SECOND_DAEMON" "$FIRST_CONFINE" "$SECOND_CONFINE" <<'PY'
 import json
 import platform
-import socket
 import subprocess
 import sys
 
@@ -120,8 +119,7 @@ manifest = {
     },
     "environment": {
         "go_env": json.loads(subprocess.check_output(["go", "env", "-json", *go_env_fields], text=True)),
-        "host": socket.gethostname(),
-        "kernel": platform.uname()._asdict(),
+        "kernel": {key: value for key, value in platform.uname()._asdict().items() if key != "node"},
     },
     "go_toolchain": toolchain,
     "source_commit": commit,

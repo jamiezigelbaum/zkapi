@@ -357,7 +357,21 @@ const nsBefore = netnsCount();
 await section('host facts', async () => {
   const env = { ...process.env };
   let chk; try { chk = JSON.parse(execFileSync(launcher, ['check'], { encoding: 'utf8', env })); } catch (e) { chk = { ok: false, error: String(e) }; }
-  report.host = { kernel: execFileSync('uname', ['-r'], { encoding: 'utf8' }).trim(), runtime: runtimeName, check: chk };
+  const sha256 = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  let commit;
+  try { commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: here, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch {}
+  report.host = {
+    kernel: execFileSync('uname', ['-r'], { encoding: 'utf8' }).trim(),
+    runtime: runtimeName,
+    check: chk,
+    sha256: {
+      launcher: sha256(launcher),
+      ablationLauncher: sha256(ablationLauncher),
+      initLauncher: sha256(initLauncher),
+      gostandin: sha256(gostandin),
+    },
+    ...(commit ? { commit } : {}),
+  };
   log('host: ' + JSON.stringify(report.host));
   ok('launcher check', chk.ok === true, JSON.stringify(chk));
   if (chk.ok) {

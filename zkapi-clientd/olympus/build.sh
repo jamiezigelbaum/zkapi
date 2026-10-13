@@ -12,7 +12,7 @@
 set -euo pipefail
 
 GO_VERSION="go1.27.1"                  # pinned toolchain
-VERSION="0.1.6-olympus3"               # upstream clientd-v0.1.6 + Olympus patches
+VERSION="0.1.6-olympus4"               # upstream clientd-v0.1.6 + Olympus patches
 target="${1:-darwin-arm64}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 CLIENTD="$(cd "$HERE/.." && pwd)"

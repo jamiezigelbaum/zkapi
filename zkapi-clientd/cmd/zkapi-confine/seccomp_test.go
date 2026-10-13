@@ -141,6 +141,11 @@ func TestFilterSecurityDecisions(t *testing.T) {
 			check("namespace clone", 56, deny, flag)
 		}
 		check("ordinary clone", 56, allow, 0x100|0x200|17)
+		// Custody only observes a lifetime and procfs metadata. No policy
+		// widening is needed; pidfd_getfd stays in the denied list below.
+		for _, nr := range []uint32{434, 7, 271, 0, 2, 3, 217, 89, 257, 267} {
+			check("custody observation syscall", nr, allow)
+		}
 		for _, nr := range []uint32{101, 310, 311, 438, 312, 272, 308, 425, 426, 427, 165, 166, 155, 161, 442, 429, 428, 430, 431, 432, 433, 304, 321, 298, 323, 246, 320, 175, 313, 176, 169, 250, 248, 249, 167, 168, 163} {
 			check("denied syscall", nr, deny)
 		}

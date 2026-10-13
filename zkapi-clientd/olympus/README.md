@@ -26,15 +26,24 @@ flags, behaviour is unchanged from upstream.
 | `--companion-proxy-listen IP:PORT` | Binds the companion CONNECT proxy to exactly this address (`127.0.0.1` or `[::1]`, nonzero port). A bind failure exits; no fallback port. |
 | `--wallet-api-listen IP:PORT` | Fixed loopback address for the managed companion API; rewrites `zkapi.client_url` in memory. |
 | `--require-managed-companion` | Refuses to start if `external_companion` is configured (the two listen flags imply it). |
-| `--require-companion-custody` | macOS only: before every new wallet HTTP connection, dials without sending bytes, proves the supervised child owns the reverse endpoint of that exact established socket, and fails closed otherwise. |
+| `--require-companion-custody` | macOS and Linux: before every new wallet HTTP connection, dials without sending bytes, proves the supervised child owns the reverse endpoint of that exact established socket, and fails closed otherwise. |
 
 `/admin/status` (API bearer required) gains a `transport` object: `kind`,
 `relay_endpoint`, `companion`, `wallet_api`, `connect_proxy`, and, for a
 custody-gated run, `wallet_custody: "connection_owner_verified"`; no credentials
 or query secrets. The custody gate binds the child lifetime with a Darwin
 kqueue process event and checks the connected socket's exact reversed four-tuple
-through `/usr/sbin/lsof`. The same socket is then handed to `net/http`, so a
-listener replacement cannot receive the saved bridge token. Before child start,
+through `/usr/sbin/lsof`. On Linux, `pidfd_open` is taken after child start
+and before the supervisor can reap it; nonblocking pidfd polling permanently
+rejects an exited lifetime. Ownership joins the child's `/proc/<pid>/fd` socket
+inodes to the exact ESTABLISHED reverse four-tuple in its `net/tcp` and `net/tcp6`
+tables. Native-endian address words and IPv4-mapped IPv6 are decoded explicitly.
+The procfs PID comes from the held pidfd's `fdinfo` (the launcher inherits a host
+proc mount while using a nested PID namespace). The original lifetime is checked
+again after inspection, so procfs lookup or PID reuse cannot transfer authority.
+An inspection error refuses immediately; only the connect/accept window is
+retried, at most 20 times at 10 ms and within a two-second deadline. The same
+socket is then handed to `net/http`, so a listener replacement cannot receive the saved bridge token. Before child start,
 after child exit, on an unowned listener, or when ownership inspection fails,
 the transport sends no application bytes. Unsupported platforms refuse this
 opt-in flag.
@@ -43,7 +52,7 @@ opt-in flag.
 
 - Upstream: `ethereum/zkapi` commit `045b444ea1b52538d1b40273c7cb6ed09468a052` (main, 2026-10-01).
 - Release tag: `clientd-v0.1.6` (an ancestor of the pin; plus three package-pin commits).
-- Fork version string: `0.1.6-olympus3`.
+- Fork version string: `0.1.6-olympus4`.
 - Go toolchain: `go1.27.1` (`GOTOOLCHAIN` is set by `build.sh`).
 - Branch: `olympus/supervisor-flags`.
 
@@ -53,7 +62,7 @@ opt-in flag.
 zkapi-clientd/olympus/build.sh
 ```
 
-The default builds darwin/arm64 with `CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w -X main.version=0.1.6-olympus3"`,
+The default builds darwin/arm64 with `CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w -X main.version=0.1.6-olympus4"`,
 writes `dist/zkapi-clientd`, `dist/SHA256SUMS` and `dist/third-party/` (licence
 texts for the linked Go modules), then rebuilds from a clean `git archive` copy
 in a temp dir and fails if the hashes differ. It builds committed `HEAD`
@@ -98,10 +107,16 @@ The Linux build includes the daemon and `bin/zkapi-confine`, compares both
 against a second build from committed HEAD, and records both build hashes and
 the build environment under `olympus/dist/`. The Linux x64 release bundle adds
 `bin/zkapi-confine`; Mac bundles retain their existing layout and metadata.
-The prepared release version is `0.1.6-olympus3`.
+The prepared release version is `0.1.6-olympus4`.
+Linux custody needs no launcher-policy widening: the existing seccomp denylist
+already permits pidfd_open, poll/ppoll and procfs inspection; pidfd_getfd remains
+denied. Landlock confines network/Unix access, not ordinary file reads. The
+reviewed seccomp golden is unchanged. Darwin custody and shared transport code
+are unchanged; only the release version changes their binaries.
 Do not publish these changes under an existing immutable release tag.
 
-Linux amd64 release-preparation hashes (2026-10-12), copied directly from
+Historical olympus3 Linux amd64 release-preparation hashes (2026-10-12),
+copied directly from
 `dist/SHA256SUMS` after two matching builds on Sparta with the official
 `go1.27.1.linux-amd64` toolchain:
 

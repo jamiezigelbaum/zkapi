@@ -186,7 +186,7 @@ release. Olympus pins those hashes in `src/core/managed-tools.ts`.
 
 ## Licences and notices
 
-MIT (`LICENSE`, copyright Open Anonymity Team), `NOTICE-modified.md` (modified-source
+MIT (`LICENSE`, copyright Open Anonymity Team; portions Open Coordination Unlimited, Inc.), `NOTICE-modified.md` (modified-source
 statement and the go-ethereum LGPL-3.0 note), and per-module licence texts generated
 into `dist/third-party/` by `build.sh`. Upstream's own third-party tree is generated
 at its release time and is not in the source tree.

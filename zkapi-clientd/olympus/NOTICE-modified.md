@@ -27,6 +27,10 @@ Linux x64 launcher packaging and build-environment records; Mac bundle layout
 is unchanged. `olympus-supervisor-flags.patch` records only the earlier daemon
 patches, not these launcher additions; Git history is the complete source record.
 
+The Olympus modifications and additions described above are copyright (c) 2026
+Open Coordination Unlimited, Inc., under the same MIT License. The upstream code
+remains copyright Open Anonymity Team.
+
 Not affiliated with, or endorsed by, the upstream authors.
 
 ## go-ethereum (LGPL-3.0)

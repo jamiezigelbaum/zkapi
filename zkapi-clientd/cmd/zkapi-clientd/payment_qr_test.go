@@ -28,7 +28,7 @@ func TestPaymentRequestURI(t *testing.T) {
 			q.DeploymentID = "zkapi-native-eth-sepolia-note-bound-v1-fresh-20260930"
 		}
 		uri, err := paymentRequestURI(q)
-		want := "ethereum:" + q.Address + "@" + new(big.Int).SetUint64(chain).String() + "?value=750001000029999"
+		want := "ethereum:" + q.Address + "@" + new(big.Int).SetUint64(chain).String() + "?value=750001000089999"
 		if err != nil || uri != want {
 			t.Fatalf("chain %d: got %q, %v; want %q", chain, uri, err, want)
 		}
@@ -40,7 +40,7 @@ func TestWithdrawalPaymentQRFundsOnlyFees(t *testing.T) {
 	q.Binding = "private-clearance-binding"
 	q.BalanceWei, q.ShortfallWei, q.RecommendedTopUpWei = "10000", "15000", "20000"
 	uri, err := paymentRequestURI(q)
-	if err != nil || uri != "ethereum:"+q.Address+"@1?value=20000" {
+	if err != nil || uri != "ethereum:"+q.Address+"@1?value=80000" {
 		t.Fatal("withdrawal QR included the private payout or wrong recipient", uri, err)
 	}
 	var out bytes.Buffer
@@ -152,7 +152,7 @@ func TestPrintSetupPaymentQR(t *testing.T) {
 	if err := printSetupPaymentQR(&out, q); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Network: Ethereum Mainnet", "Send: 0.000750001000029999 ETH", "To: " + q.Address, "Payment URI: ethereum:" + q.Address + "@1?value=750001000029999", paymentQRColors, paymentQRReset} {
+	for _, want := range []string{"Network: Ethereum Mainnet", "Send: 0.000750001000089999 ETH", "To: " + q.Address, "Payment URI: ethereum:" + q.Address + "@1?value=750001000089999", paymentQRColors, paymentQRReset} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("missing %q from payment instructions", want)
 		}

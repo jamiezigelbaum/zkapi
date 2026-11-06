@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -196,7 +197,27 @@ func TestGuidedWithdrawalRejectsQuoteIdentityChangesAfterEnter(t *testing.T) {
 	}
 }
 
-func TestGuidedWithdrawalFeeIncreaseOrBalanceLossRequiresNewEnter(t *testing.T) {
+func TestGuidedWithdrawalFeeRiseWithinHeadroomUsesOneEnter(t *testing.T) {
+	f := &withdrawalWizardFixture{}
+	u := &fundingWizardUI{answers: []string{withdrawalTestDestination}, confirmations: []bool{true}}
+	f.quote = func(call int, _ string, _ uint64, _ string) (zkapi.AddressPaymentQuote, error) {
+		q := withdrawalWizardQuote()
+		q.ID = fmt.Sprintf("%064x", call)
+		if call >= 2 {
+			reserve, _ := strconv.ParseInt(q.FeeReserveWei, 10, 64)
+			withdrawalQuoteFunds(&q, reserve*4, reserve*3-5000, reserve*3)
+		}
+		return q, nil
+	}
+	if err := guidedWithdrawal(context.Background(), f, u, immediateWizardPoll); err != nil {
+		t.Fatal(err)
+	}
+	if u.continues != 1 || f.approveCalls != 1 || strings.Contains(u.String(), "Network fees increased") {
+		t.Fatalf("fee rise within headroom asked again: %+v %+v", u, f)
+	}
+}
+
+func TestGuidedWithdrawalFeeAboveHeadroomOrBalanceLossRequiresNewEnter(t *testing.T) {
 	for _, loss := range []bool{false, true} {
 		t.Run(fmt.Sprint(loss), func(t *testing.T) {
 			f := &withdrawalWizardFixture{}
@@ -205,7 +226,11 @@ func TestGuidedWithdrawalFeeIncreaseOrBalanceLossRequiresNewEnter(t *testing.T) 
 				q := withdrawalWizardQuote()
 				q.ID = fmt.Sprintf("%064x", call)
 				if call >= 2 {
-					withdrawalQuoteFunds(&q, 50000, 35000, 40000)
+					reserve, _ := strconv.ParseInt(withdrawalWizardQuote().FeeReserveWei, 10, 64)
+					withdrawalQuoteFunds(&q, reserve*5, reserve*3, reserve*3+1)
+					if loss {
+						withdrawalQuoteFunds(&q, 50000, 35000, 40000)
+					}
 				}
 				if loss && call == 2 {
 					withdrawalQuoteFunds(&q, 0, 25000, 30000)

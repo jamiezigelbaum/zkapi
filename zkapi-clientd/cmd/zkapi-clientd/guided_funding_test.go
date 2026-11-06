@@ -554,7 +554,7 @@ func TestGuidedFundingPartialPaymentsAndFeesUpdateWithoutPrompting(t *testing.T)
 	for _, want := range []string{
 		"Waiting for ETH: receiving account balance 0.000000000000000000 ETH; still needed 0.000750001000025000 ETH.",
 		"Waiting for ETH: receiving account balance 0.000100000000000000 ETH; still needed 0.000650001000025000 ETH.",
-		"?value=650001000030000", "?value=650001000031000",
+		"?value=650001000090000", "?value=650001000093000",
 	} {
 		if !strings.Contains(u.String(), want) {
 			t.Fatalf("missing updated payment information %q", want)

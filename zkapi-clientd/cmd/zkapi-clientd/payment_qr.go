@@ -79,7 +79,29 @@ func paymentRequestURI(q zkapi.AddressPaymentQuote) (string, error) {
 	if shortfall.Sign() == 0 || topUp.Sign() == 0 {
 		return "", nil
 	}
-	return fmt.Sprintf("ethereum:%s@%d?value=%s", q.Address, q.ChainID, topUp), nil
+	return fmt.Sprintf("ethereum:%s@%d?value=%s", q.Address, q.ChainID, paymentSendWei(principal, reserve, balance)), nil
+}
+
+// Fee headroom: one payment should survive gas moving while it arrives and
+// the owner presses Enter. Three times the current maximum covers about nine
+// consecutive full blocks, the 12.5% per block EIP-1559 limit, and in practice
+// the few minutes a payment takes. Unspent ETH stays at the payment address.
+const paymentFeeHeadroom = 3
+
+func paymentSendWei(principal, reserve, balance *big.Int) *big.Int {
+	send := new(big.Int).Mul(reserve, big.NewInt(paymentFeeHeadroom))
+	send.Add(send, principal).Sub(send, balance)
+	if send.Sign() < 0 {
+		send.SetInt64(0)
+	}
+	return send
+}
+
+func quotedSendWei(q zkapi.AddressPaymentQuote) string {
+	principal, _ := new(big.Int).SetString(q.PrincipalWei, 10)
+	reserve, _ := new(big.Int).SetString(q.FeeReserveWei, 10)
+	balance, _ := new(big.Int).SetString(q.BalanceWei, 10)
+	return paymentSendWei(principal, reserve, balance).String()
 }
 
 func printSetupPaymentQR(out io.Writer, q zkapi.AddressPaymentQuote) error {
@@ -94,7 +116,7 @@ func printSetupPaymentQR(out io.Writer, q zkapi.AddressPaymentQuote) error {
 	// Bitmap includes the standard four-module quiet zone. Half blocks preserve
 	// square modules in a normal terminal while keeping the symbol under 80 columns.
 	qr := terminalPaymentQR(code.Bitmap())
-	_, err = fmt.Fprintf(out, "\nScan with an Ethereum wallet:\n%sNetwork: %s\nSend: %s ETH (including the fee buffer)\nTo: %s\nPayment URI: %s\n", qr, fundingNetwork(q.ChainID), fundingUnits(q.RecommendedTopUpWei, 18), q.Address, uri)
+	_, err = fmt.Fprintf(out, "\nScan with an Ethereum wallet:\n%sNetwork: %s\nSend: %s ETH (including the fee buffer)\nTo: %s\nPayment URI: %s\n", qr, fundingNetwork(q.ChainID), fundingUnits(quotedSendWei(q), 18), q.Address, uri)
 	return err
 }
 

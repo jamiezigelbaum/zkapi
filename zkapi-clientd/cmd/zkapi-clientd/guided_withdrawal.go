@@ -224,12 +224,12 @@ func waitAndWithdraw(ctx context.Context, service guidedWithdrawalService, initi
 			continue
 		}
 		displayedPayment = nil
-		if !approved || !setupFeeWithin(quote, ceiling) {
+		if !approved || !setupFeeWithinTolerance(quote, ceiling) {
 			clearSetupProgress(ui)
 			if approved {
 				ui.Printf("Network fees increased; review the updated maximum.\n")
 			}
-			ui.Printf("Fees funded. Maximum network fee: %s ETH.\n", fundingUnits(quote.FeeReserveWei, 18))
+			ui.Printf("Fees funded. Maximum network fee: %s ETH. Enter also accepts up to three times this if fees move.\n", fundingUnits(quote.FeeReserveWei, 18))
 			proceed, err := ui.Continue(ctx, "Press Enter to withdraw, or type cancel")
 			if err != nil {
 				return err

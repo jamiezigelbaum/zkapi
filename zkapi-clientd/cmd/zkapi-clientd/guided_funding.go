@@ -207,6 +207,16 @@ func setupFeeWithin(quote zkapi.AddressPaymentQuote, maximum string) bool {
 	return ok && valid && fee.Sign() >= 0 && cap.Sign() >= 0 && fee.Cmp(cap) <= 0
 }
 
+// Gas moves every block, so a strict ceiling can re-prompt on each Enter. One
+// Enter accepts up to the funded headroom, and the prompt says so.
+func setupFeeWithinTolerance(quote zkapi.AddressPaymentQuote, maximum string) bool {
+	cap, valid := new(big.Int).SetString(maximum, 10)
+	if !valid {
+		return false
+	}
+	return setupFeeWithin(quote, new(big.Int).Mul(cap, big.NewInt(paymentFeeHeadroom)).String())
+}
+
 func showSetupDeposit(ui setupPrompter, q zkapi.AddressPaymentQuote) error {
 	return showSetupDepositPayment(ui, q, false)
 }
@@ -222,7 +232,7 @@ func showSetupDepositPayment(ui setupPrompter, q zkapi.AddressPaymentQuote, upda
 		payment.WriteString("\nPayment information updated.\n")
 	}
 	fmt.Fprintf(&payment, "\n%s\nFunding address: %s\nReceiving account balance: %s ETH\nPrivate deposit: %s ETH\nEstimated network fee: %s ETH\nMaximum network fee: %s ETH\n", fundingNetwork(q.ChainID), q.Address, fundingUnits(q.BalanceWei, 18), fundingUnits(q.PrincipalWei, 18), fundingUnits(q.ExpectedFeeWei, 18), fundingUnits(q.FeeReserveWei, 18))
-	fmt.Fprintf(&payment, "Required top-up: %s ETH\nRecommended top-up including fee buffer: %s ETH\n", fundingUnits(q.ShortfallWei, 18), fundingUnits(q.RecommendedTopUpWei, 18))
+	fmt.Fprintf(&payment, "Required top-up: %s ETH\nRecommended top-up including fee buffer: %s ETH\n", fundingUnits(q.ShortfallWei, 18), fundingUnits(quotedSendWei(q), 18))
 	if err := printSetupPaymentQR(&payment, q); err != nil {
 		return err
 	}

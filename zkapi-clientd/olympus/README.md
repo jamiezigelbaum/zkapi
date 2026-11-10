@@ -52,7 +52,7 @@ opt-in flag.
 
 - Upstream: `ethereum/zkapi` commit `045b444ea1b52538d1b40273c7cb6ed09468a052` (main, 2026-10-01).
 - Release tag: `clientd-v0.1.6` (an ancestor of the pin; plus three package-pin commits).
-- Fork version string: `0.1.6-olympus4`.
+- Fork version string: `0.1.6-olympus5`.
 - Go toolchain: `go1.27.1` (`GOTOOLCHAIN` is set by `build.sh`).
 - Branch: `olympus/supervisor-flags`.
 
@@ -62,7 +62,7 @@ opt-in flag.
 zkapi-clientd/olympus/build.sh
 ```
 
-The default builds darwin/arm64 with `CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w -X main.version=0.1.6-olympus4"`,
+The default builds darwin/arm64 with `CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w -X main.version=0.1.6-olympus5"`,
 writes `dist/zkapi-clientd`, `dist/SHA256SUMS` and `dist/third-party/` (licence
 texts for the linked Go modules), then rebuilds from a clean `git archive` copy
 in a temp dir and fails if the hashes differ. It builds committed `HEAD`
@@ -107,7 +107,7 @@ The Linux build includes the daemon and `bin/zkapi-confine`, compares both
 against a second build from committed HEAD, and records both build hashes and
 the build environment under `olympus/dist/`. The Linux x64 release bundle adds
 `bin/zkapi-confine`; Mac bundles retain their existing layout and metadata.
-The prepared release version is `0.1.6-olympus4`.
+The prepared release version is `0.1.6-olympus5`.
 Linux custody needs no launcher-policy widening: the existing seccomp denylist
 already permits pidfd_open, poll/ppoll and procfs inspection; pidfd_getfd remains
 denied. Landlock confines network/Unix access, not ordinary file reads. The
